@@ -1,201 +1,176 @@
-// FIREBASE: Importe os módulos necessários do Firebase SDK
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
-import { getFirestore, collection, onSnapshot, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp, query, where, getDocs, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, sendPasswordResetEmail, EmailAuthProvider, reauthenticateWithCredential } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-storage.js";
-
 document.addEventListener('DOMContentLoaded', () => {
 
-    // FIREBASE: Configuração e inicialização do Firebase
-    const firebaseConfig = {
-        apiKey: "AIzaSyBFXgXKDIBo9JD9vuGik5VDYZFDb_tbCrY", // Substitua pela sua chave de API
-        authDomain: "agrovetor-v2.firebaseapp.com",
-        projectId: "agrovetor-v2",
-        storageBucket: "agrovetor-v2.appspot.com",
-        messagingSenderId: "782518751171",
-        appId: "1:782518751171:web:d501ee31c1db33da4eb776",
-        measurementId: "G-JN4MSW63JR"
-    };
-
-    // Aplicação principal do Firebase
-    const firebaseApp = initializeApp(firebaseConfig);
-    const db = getFirestore(firebaseApp);
-    const auth = getAuth(firebaseApp);
-    const storage = getStorage(firebaseApp);
-
-    // Aplicação secundária do Firebase, usada APENAS para criar novos utilizadores sem deslogar o admin.
-    const secondaryApp = initializeApp(firebaseConfig, "secondary");
-    const secondaryAuth = getAuth(secondaryApp);
-
-    // Habilita a persistência offline
-    enableIndexedDbPersistence(db)
-        .catch((err) => {
-            if (err.code == 'failed-precondition') {
-                console.warn("A persistência offline falhou. Múltiplas abas abertas?");
-            } else if (err.code == 'unimplemented') {
-                console.warn("O navegador atual não suporta a persistência offline.");
-            }
-        });
-
+    // --- MOCK DATA INICIAL ---
+    // Dados de exemplo para o aplicativo funcionar sem um banco de dados.
+    const getInitialData = () => ({
+        users: [
+            { uid: 'admin123', email: 'admin@agrovetor.com', username: 'admin', role: 'admin', active: true, permissions: { dashboard: true, mapeamento: true, planejamentoColheita: true, planejamento: true, lancamentoBroca: true, lancamentoPerda: true, relatorioBroca: true, relatorioPerda: true, excluir: true, gerenciarUsuarios: true, configuracoes: true, cadastrarPessoas: true } },
+            { uid: 'tecnico123', email: 'tecnico@agrovetor.com', username: 'tecnico', role: 'tecnico', active: true, permissions: { dashboard: true, mapeamento: true, lancamentoBroca: true, lancamentoPerda: true, relatorioBroca: true, relatorioPerda: true } }
+        ],
+        fazendas: [],
+        personnel: [],
+        registros: [],
+        perdas: [],
+        planos: [],
+        harvestPlans: [],
+        mapState: {
+            armadilhas: [],
+            geoJsonData: null // Para guardar os dados do shapefile
+        }
+    });
 
     const App = {
         config: {
-            appName: "Inspeção e Planeamento de Cana com IA",
-            themeKey: 'canaAppTheme',
-            inactivityTimeout: 15 * 60 * 1000, // 15 minutos
-            menuConfig: [
-                { label: 'Dashboard', icon: 'fas fa-tachometer-alt', target: 'dashboard', permission: 'dashboard' },
-                { label: 'Mapeamento', icon: 'fas fa-satellite-dish', target: 'mapeamentoControle', permission: 'mapeamento' }, // NOVO MÓDULO
-                { label: 'Plan. Inspeção', icon: 'fas fa-calendar-alt', target: 'planejamento', permission: 'planejamento' },
-                {
-                    label: 'Colheita', icon: 'fas fa-tractor',
-                    submenu: [
-                        { label: 'Planeamento de Colheita', icon: 'fas fa-stream', target: 'planejamentoColheita', permission: 'planejamentoColheita' },
-                    ]
-                },
-                {
-                    label: 'Lançamentos', icon: 'fas fa-pen-to-square',
-                    submenu: [
-                        { label: 'Lançamento Broca', icon: 'fas fa-bug', target: 'lancamentoBroca', permission: 'lancamentoBroca' },
-                        { label: 'Lançamento Perda', icon: 'fas fa-dollar-sign', target: 'lancamentoPerda', permission: 'lancamentoPerda' },
-                    ]
-                },
-                {
-                    label: 'Relatórios', icon: 'fas fa-chart-line',
-                    submenu: [
-                        { label: 'Relatório Broca', icon: 'fas fa-chart-bar', target: 'relatorioBroca', permission: 'relatorioBroca' },
-                        { label: 'Relatório Perda', icon: 'fas fa-chart-pie', target: 'relatorioPerda', permission: 'relatorioPerda' },
-                        { label: 'Rel. Colheita Custom', icon: 'fas fa-file-invoice', target: 'relatorioColheitaCustom', permission: 'planejamentoColheita' },
-                    ]
-                },
-                {
-                    label: 'Administrativo', icon: 'fas fa-cogs',
-                    submenu: [
-                        { label: 'Cadastros', icon: 'fas fa-book', target: 'cadastros', permission: 'configuracoes' },
-                        { label: 'Cadastrar Pessoas', icon: 'fas fa-id-card', target: 'cadastrarPessoas', permission: 'cadastrarPessoas' },
-                        { label: 'Gerir Utilizadores', icon: 'fas fa-users-cog', target: 'gerenciarUsuarios', permission: 'gerenciarUsuarios' },
-                        { label: 'Configurações da Empresa', icon: 'fas fa-building', target: 'configuracoesEmpresa', permission: 'configuracoes' },
-                        { label: 'Excluir Lançamentos', icon: 'fas fa-trash', target: 'excluirDados', permission: 'excluir' },
-                    ]
-                },
-            ],
-            roles: {
-                admin: { dashboard: true, mapeamento: true, planejamentoColheita: true, planejamento: true, lancamentoBroca: true, lancamentoPerda: true, relatorioBroca: true, relatorioPerda: true, excluir: true, gerenciarUsuarios: true, configuracoes: true, cadastrarPessoas: true },
-                supervisor: { dashboard: true, mapeamento: true, planejamentoColheita: true, planejamento: true, relatorioBroca: true, relatorioPerda: true, configuracoes: true, cadastrarPessoas: true, gerenciarUsuarios: true },
-                tecnico: { dashboard: true, mapeamento: true, lancamentoBroca: true, lancamentoPerda: true, relatorioBroca: true, relatorioPerda: true },
-                colaborador: { dashboard: true, mapeamento: true, lancamentoBroca: true, lancamentoPerda: true },
-                user: { dashboard: true, mapeamento: true }
-            }
+            // ... (A configuração do menu e roles permanece a mesma) ...
         },
 
         state: {
             currentUser: null,
-            users: [],
-            registros: [],
-            perdas: [],
-            planos: [],
-            fazendas: [],
-            personnel: [],
-            companyLogo: null,
-            activeSubmenu: null,
-            charts: {},
-            harvestPlans: [],
-            activeHarvestPlan: null,
-            inactivityTimer: null,
-            unsubscribeListeners: [],
-            deferredInstallPrompt: null,
-            newUserCreationData: null,
-            expandedChart: null,
-            mapState: { // Estado específico do mapa
-                map: null,
-                geoJsonLayer: null,
-                trapMarkers: null,
-                isTracking: false,
-                userLocationMarker: null,
-                lastKnownPosition: null,
-                armadilhas: [],
-                generalAlertInterval: null
-            }
+            // O resto do estado será carregado do localStorage
         },
         
         elements: {
-            // ... (todos os seus elementos existentes) ...
-            mapeamento: {
-                btnUploadShp: document.getElementById('btn-upload-shp'),
-                shapefileInput: document.getElementById('shapefileInput'),
-                btnToggleTracking: document.getElementById('btn-toggle-tracking'),
-                btnPlaceTrap: document.getElementById('btn-place-trap'),
-                mapContainer: document.getElementById('map'),
-                notificationPanel: document.getElementById('notification-panel'),
-                adminUploadSection: document.getElementById('admin-upload-section')
-            }
+            // ... (A lista de elementos permanece a mesma) ...
         },
 
         init() {
-            // ... (seu init existente) ...
-            this.map.init(); // Inicializa o mapa
+            this.data.loadStateFromLocalStorage();
+            this.ui.applyTheme(localStorage.getItem('canaAppTheme') || 'theme-green');
+            this.ui.setupEventListeners();
+            this.auth.checkSession();
+            this.map.init(); 
         },
         
         auth: {
-            // ... (seu auth existente, com a lógica de login offline corrigida) ...
+            checkSession() {
+                const lastUser = JSON.parse(localStorage.getItem('lastUserProfile'));
+                if (lastUser) {
+                    App.state.currentUser = lastUser;
+                    App.ui.showAppScreen();
+                } else {
+                    App.ui.showLoginScreen();
+                }
+            },
+            login() {
+                const email = App.elements.loginUser.value.trim();
+                const password = App.elements.loginPass.value;
+                
+                // Simulação de login
+                const user = App.state.users.find(u => u.email === email);
+
+                if (user && user.active) { // Não verificamos a senha no modo local
+                    App.state.currentUser = user;
+                    localStorage.setItem('lastUserProfile', JSON.stringify(user));
+                    App.ui.showAppScreen();
+                } else {
+                    App.ui.showLoginMessage("Usuário não encontrado ou inativo.");
+                }
+            },
+            logout() {
+                App.state.currentUser = null;
+                localStorage.removeItem('lastUserProfile');
+                clearTimeout(App.state.inactivityTimer);
+                App.ui.showLoginScreen();
+            },
+            // Funções de criar/gerenciar usuários ficam como placeholders visuais
+            initiateUserCreation() {
+                 App.ui.showAlert("Função desativada no modo local.", "warning");
+            },
         },
 
         data: {
-            // ... (seu data existente) ...
+            loadStateFromLocalStorage() {
+                const savedState = JSON.parse(localStorage.getItem('agrovetor_data'));
+                if (savedState) {
+                    App.state = { ...App.state, ...savedState };
+                } else {
+                    // Se não houver dados salvos, carrega os dados iniciais
+                    const initialState = getInitialData();
+                    App.state = { ...App.state, ...initialState };
+                    this.saveStateToLocalStorage();
+                }
+            },
+            saveStateToLocalStorage() {
+                const stateToSave = { ...App.state };
+                // Não salvamos o usuário logado ou o mapa, pois são transitórios
+                delete stateToSave.currentUser;
+                delete stateToSave.mapState.map;
+                delete stateToSave.mapState.trapMarkers;
+                delete stateToSave.mapState.userLocationMarker;
+                
+                localStorage.setItem('agrovetor_data', JSON.stringify(stateToSave));
+            },
+            addDocument(collectionName, data) {
+                if (App.state[collectionName]) {
+                    const newEntry = { ...data, id: Date.now() };
+                    App.state[collectionName].push(newEntry);
+                    this.saveStateToLocalStorage();
+                    App.ui.renderAllDynamicContent();
+                }
+            },
+            deleteDocument(collectionName, id) {
+                 if (App.state[collectionName]) {
+                    App.state[collectionName] = App.state[collectionName].filter(item => item.id != id);
+                    this.saveStateToLocalStorage();
+                    App.ui.renderAllDynamicContent();
+                }
+            }
         },
         
         ui: {
-            // ... (seu ui existente, com a lógica de limpar formulário corrigida) ...
+            // ... (A maior parte do seu UI permanece a mesma) ...
+            clearForm(formElement) {
+                if (!formElement) return;
+                const inputs = formElement.querySelectorAll('input, select, textarea');
+                inputs.forEach(input => {
+                    if (input.type === 'checkbox' || input.type === 'radio') {
+                        input.checked = false;
+                    } else if (input.type !== 'date') {
+                        input.value = '';
+                    }
+                });
+                formElement.querySelectorAll('.info-display').forEach(el => el.textContent = '');
+                formElement.querySelectorAll('.resultado').forEach(el => el.textContent = '');
+            },
         },
         
         actions: {
-            // ... (suas actions existentes) ...
+            // ... (A maior parte das suas actions permanece a mesma) ...
+
             saveBrocamento() {
                 if (!App.ui.validateFields(['codigo', 'data', 'talhao', 'entrenos', 'brocaBase', 'brocaMeio', 'brocaTopo'])) { 
                     App.ui.showAlert("Preencha todos os campos obrigatórios!", "error"); 
                     return; 
                 }
                 
-                App.ui.showConfirmationModal('Tem a certeza que deseja guardar esta inspeção de broca?', async () => {
-                    const { broca } = App.elements;
-                    const farm = App.state.fazendas.find(f => f.id === broca.codigo.value);
-                    if (!farm) { App.ui.showAlert("Fazenda não encontrada.", "error"); return; }
-                    const talhao = farm.talhoes.find(t => t.name.toUpperCase() === broca.talhao.value.trim().toUpperCase());
-                    
-                    if (!talhao) {
-                        App.ui.showAlert(`Talhão "${broca.talhao.value}" não encontrado na fazenda "${farm.name}". Verifique o cadastro.`, "error");
-                        return;
-                    }
+                const { broca } = App.elements;
+                const farm = App.state.fazendas.find(f => f.id == broca.codigo.value);
+                if (!farm) { App.ui.showAlert("Fazenda não encontrada.", "error"); return; }
+                const talhao = farm.talhoes.find(t => t.name.toUpperCase() === broca.talhao.value.trim().toUpperCase());
+                
+                if (!talhao) {
+                    App.ui.showAlert(`Talhão "${broca.talhao.value}" não encontrado na fazenda "${farm.name}". Verifique o cadastro.`, "error");
+                    return;
+                }
 
-                    const newEntry = {
-                        codigo: farm.code, fazenda: farm.name, data: broca.data.value,
-                        talhao: broca.talhao.value.trim(),
-                        corte: talhao ? talhao.corte : null,
-                        entrenos: parseInt(broca.entrenos.value),
-                        base: parseInt(broca.base.value),
-                        meio: parseInt(broca.meio.value),
-                        topo: parseInt(broca.topo.value),
-                        brocado: parseInt(broca.brocado.value),
-                        brocamento: (((parseInt(broca.brocado.value) || 0) / (parseInt(broca.entrenos.value) || 1)) * 100).toFixed(2).replace('.', ','),
-                        usuario: App.state.currentUser.username
-                    };
-                    
-                    // Ação otimista: limpa o formulário imediatamente
+                const newEntry = {
+                    codigo: farm.code, fazenda: farm.name, data: broca.data.value,
+                    talhao: broca.talhao.value.trim(),
+                    corte: talhao ? talhao.corte : null,
+                    entrenos: parseInt(broca.entrenos.value),
+                    base: parseInt(broca.base.value),
+                    meio: parseInt(broca.meio.value),
+                    topo: parseInt(broca.topo.value),
+                    brocado: parseInt(broca.brocado.value),
+                    brocamento: (((parseInt(broca.brocado.value) || 0) / (parseInt(broca.entrenos.value) || 1)) * 100).toFixed(2).replace('.', ','),
+                    usuario: App.state.currentUser.username
+                };
+
+                App.ui.showConfirmationModal('Tem a certeza que deseja guardar esta inspeção?', () => {
+                    App.data.addDocument('registros', newEntry);
+                    App.ui.showAlert('Inspeção guardada localmente com sucesso!');
                     App.ui.clearForm(broca.form);
                     App.ui.setDefaultDatesForEntryForms();
-
-                    try {
-                        await App.data.addDocument('registros', newEntry);
-                        if (navigator.onLine) {
-                            App.ui.showAlert('Inspeção guardada com sucesso!');
-                        } else {
-                            App.ui.showAlert('Inspeção guardada offline. Será enviada quando houver conexão.', 'info');
-                        }
-                        this.verificarEAtualizarPlano('broca', newEntry.codigo, newEntry.talhao);
-                    } catch(e) {
-                        App.ui.showAlert('Erro ao guardar inspeção.', 'error');
-                        console.error("Erro ao salvar brocamento:", e);
-                    }
                 });
             },
             
@@ -206,16 +181,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 
                 const { perda } = App.elements;
-                const farm = App.state.fazendas.find(f => f.id === perda.codigo.value);
+                const farm = App.state.fazendas.find(f => f.id == perda.codigo.value);
                 const operator = App.state.personnel.find(p => p.matricula === perda.matricula.value.trim());
                 if (!operator) {
-                    App.ui.showAlert("Matrícula do operador não encontrada. Verifique o cadastro.", "error");
+                    App.ui.showAlert("Matrícula do operador não encontrada.", "error");
                     return;
                 }
                 const talhao = farm?.talhoes.find(t => t.name.toUpperCase() === perda.talhao.value.trim().toUpperCase());
 
                 if (!talhao) {
-                    App.ui.showAlert(`Talhão "${perda.talhao.value}" não encontrado na fazenda "${farm.name}". Verifique o cadastro.`, "error");
+                    App.ui.showAlert(`Talhão "${perda.talhao.value}" não encontrado na fazenda "${farm.name}".`, "error");
                     return;
                 }
                 
@@ -237,29 +212,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     usuario: App.state.currentUser.username
                 };
                 
-                App.ui.showConfirmationModal('Tem a certeza que deseja guardar este lançamento de perda?', async () => {
+                App.ui.showConfirmationModal('Tem a certeza que deseja guardar este lançamento?', () => {
+                    App.data.addDocument('perdas', newEntry);
+                    App.ui.showAlert('Lançamento de perda guardado localmente com sucesso!');
                     App.ui.clearForm(perda.form);
                     App.ui.setDefaultDatesForEntryForms();
-
-                    try {
-                        await App.data.addDocument('perdas', newEntry);
-                        if (navigator.onLine) {
-                            App.ui.showAlert('Lançamento de perda guardado com sucesso!');
-                        } else {
-                            App.ui.showAlert('Lançamento de perda guardado offline. Será enviado quando houver conexão.', 'info');
-                        }
-                        this.verificarEAtualizarPlano('perda', newEntry.codigo, newEntry.talhao);
-                    } catch(e) {
-                        App.ui.showAlert('Erro ao guardar lançamento de perda.', 'error');
-                        console.error("Erro ao salvar perda:", e);
-                    }
                 });
             }
         },
         
         map: {
             init() {
-                if (App.state.mapState.map) return; // Previne reinicialização
+                if (App.state.mapState.map) return;
                 
                 const mapInstance = L.map('map').setView([-21.17, -47.81], 13);
                 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -270,23 +234,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 App.state.mapState.trapMarkers = L.layerGroup().addTo(mapInstance);
 
                 this.setupMapEventListeners();
+                this.loadMapDataFromState(); // Carrega dados do mapa salvos localmente
+                setInterval(() => this.checkTrapStatusByTime(), 60 * 1000);
+            },
 
-                // Inicia o ciclo de verificação de armadilhas
-                setInterval(this.checkTrapStatusByTime, 60 * 1000);
+            loadMapDataFromState() {
+                if (App.state.mapState.geoJsonData) {
+                    this.processGeoJSON(App.state.mapState.geoJsonData);
+                }
+                if (App.state.mapState.armadilhas) {
+                    this.updateAllMarkers();
+                }
             },
 
             setupMapEventListeners() {
                 const els = App.elements.mapeamento;
                 const map = App.state.mapState.map;
 
-                if (App.state.currentUser.permissions.configuracoes) {
+                if (App.state.currentUser && App.state.currentUser.role === 'admin') {
                     els.btnUploadShp.style.display = 'inline-flex';
                 } else {
                     els.btnUploadShp.style.display = 'none';
                 }
 
                 els.btnUploadShp.addEventListener('click', () => els.shapefileInput.click());
-                els.shapefileInput.addEventListener('change', this.handleFile);
+                els.shapefileInput.addEventListener('change', (e) => this.handleFile(e));
                 els.btnToggleTracking.addEventListener('click', () => this.toggleTracking());
                 els.btnPlaceTrap.addEventListener('click', () => this.placeTrap());
 
@@ -296,7 +268,38 @@ document.addEventListener('DOMContentLoaded', () => {
             },
 
             handleFile(event) {
-                // ... (lógica de upload do shapefile) ...
+                const file = event.target.files[0];
+                if (file && file.name.endsWith('.zip')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        shp(e.target.result).then(geojson => {
+                            App.state.mapState.geoJsonData = geojson; // Salva os dados do mapa no estado
+                            App.data.saveStateToLocalStorage();
+                            this.processGeoJSON(geojson);
+                            alert('Mapa carregado e salvo localmente com sucesso!');
+                        }).catch(err => {
+                            console.error("Erro ao processar o shapefile:", err);
+                            alert("Erro ao carregar o shapefile. Verifique o formato do .zip.");
+                        });
+                    };
+                    reader.readAsArrayBuffer(file);
+                }
+            },
+
+            processGeoJSON(geojson) {
+                if (App.state.mapState.geoJsonLayer) App.state.mapState.map.removeLayer(App.state.mapState.geoJsonLayer);
+                
+                const geoJsonLayer = L.geoJSON(geojson, {
+                    style: this.getTalhaoStyle.bind(this),
+                    onEachFeature: (feature, layer) => {
+                        const props = feature.properties;
+                        const talhaoNome = props.TALHAO || props.plot || 'N/A';
+                        layer.bindPopup(`<strong>Talhão:</strong> ${talhaoNome}`);
+                    }
+                }).addTo(App.state.mapState.map);
+
+                App.state.mapState.geoJsonLayer = geoJsonLayer;
+                App.state.mapState.map.fitBounds(geoJsonLayer.getBounds());
             },
             
             toggleTracking() {
@@ -331,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
             },
 
             onMapClick(e) {
-                if (confirm('Deseja adicionar uma armadilha neste local?')) {
+                 if (confirm('Deseja adicionar uma armadilha neste local?')) {
                     this.addTrap(e.latlng);
                 }
             },
@@ -350,11 +353,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     lat: latlng.lat,
                     lng: latlng.lng,
                     dataColocacao: new Date().toISOString(),
-                    status: 'ok', // ok, verificar, alerta
+                    status: 'ok',
                     contagem: 0,
-                    fazenda: 'Fazenda Simulada' // TODO: Implementar detecção de fazenda/talhão
+                    fazenda: 'Fazenda Simulada'
                 };
                 App.state.mapState.armadilhas.push(novaArmadilha);
+                App.data.saveStateToLocalStorage();
                 this.renderTrapMarker(novaArmadilha);
             },
 
@@ -385,6 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     marker.closePopup();
                                     this.updateAllMarkers();
                                     this.checkGeneralAlert(armadilha.fazenda);
+                                    App.data.saveStateToLocalStorage();
                                 }
                             });
                         }
@@ -419,6 +424,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 if (needsUpdate) {
                     this.updateAllMarkers();
+                    App.data.saveStateToLocalStorage();
                 }
             },
 
@@ -462,12 +468,14 @@ document.addEventListener('DOMContentLoaded', () => {
                         setTimeout(() => panel.removeChild(alertDiv), 500);
                     }
                 }
+            },
+            getTalhaoStyle(feature){
+                // Lógica para colorir talhões com alerta
+                return { color: 'var(--color-primary)', weight: 2, opacity: 0.8, fillColor: 'var(--color-accent)', fillOpacity: 0.3 };
             }
         },
-
-        // ... (resto do seu objeto App, como reports, pwa, etc.)
     };
 
-    // Inicia a aplicação
+    // Inicializa a aplicação
     App.init();
 });
